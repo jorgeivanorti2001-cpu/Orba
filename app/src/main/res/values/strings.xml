@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- El nombre de cada app (Orba / Orba Music) se define en app/build.gradle.kts -->
+</resources>
