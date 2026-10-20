@@ -140,9 +140,10 @@ object Engine {
         if (detectPlatform(url) == PLATFORM_YOUTUBE) {
             val all = listOf(
                 null,
+                "youtube:player_client=android_vr",
                 "youtube:player_client=default,tv,mweb",
-                "youtube:player_client=tv_simply,web_safari",
                 "youtube:player_client=ios,android",
+                "youtube:player_client=tv_simply,web_safari",
                 "youtube:player_client=web_embedded,mweb",
             )
             // Primero la forma que funcionó la última vez: así no se pierden segundos probando las que fallan
@@ -156,20 +157,33 @@ object Engine {
     @Volatile private var bestYoutubeArgs: String? = null
     @Volatile private var memory: android.content.SharedPreferences? = null
 
+    /**
+     * Solo se recuerdan las formas que entregan direcciones rápidas. Las de navegador (web, tv)
+     * pueden funcionar pero con la descarga frenada por YouTube: esas se usan solo si hace falta,
+     * y no quedan de primeras. Lo recordado vence a las 12 horas (YouTube cambia seguido).
+     */
+    private val fastClients = setOf("", "youtube:player_client=android_vr", "youtube:player_client=ios,android")
+
     private fun rememberWinner(context: Context, url: String, args: String?) {
         if (detectPlatform(url) != PLATFORM_YOUTUBE) return
         val value = args ?: ""
+        val sp = memory ?: context.applicationContext.getSharedPreferences("engine", Context.MODE_PRIVATE).also { memory = it }
+        if (value !in fastClients) {
+            if (bestYoutubeArgs != null && bestYoutubeArgs !in fastClients) { bestYoutubeArgs = null; sp.edit().remove("ytArgs").apply() }
+            return
+        }
         if (value == bestYoutubeArgs) return
         bestYoutubeArgs = value
-        (memory ?: context.applicationContext.getSharedPreferences("engine", Context.MODE_PRIVATE).also { memory = it })
-            .edit().putString("ytArgs", value).apply()
+        sp.edit().putString("ytArgs", value).putLong("ytArgsAt", System.currentTimeMillis()).apply()
     }
 
     private fun loadMemory(context: Context) {
         if (memory != null) return
         val sp = context.applicationContext.getSharedPreferences("engine", Context.MODE_PRIVATE)
         memory = sp
-        bestYoutubeArgs = sp.getString("ytArgs", null)
+        val at = sp.getLong("ytArgsAt", 0L)
+        val saved = sp.getString("ytArgs", null)
+        bestYoutubeArgs = saved?.takeIf { it in fastClients && System.currentTimeMillis() - at < 12 * 60 * 60 * 1000L }
     }
 
     /** Errores que suelen arreglarse reintentando de otra forma o con el motor actualizado. */

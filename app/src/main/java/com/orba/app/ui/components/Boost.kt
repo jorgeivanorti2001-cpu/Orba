@@ -28,7 +28,7 @@ import androidx.compose.ui.unit.dp
 import com.orba.app.ui.theme.Coral
 
 /** Pasos del refuerzo de volumen, en decibeles. */
-val BoostSteps = listOf(0, 3, 6, 9, 12)
+val BoostSteps = listOf(0, 4, 8, 12, 16, 20)
 
 fun boostLabel(db: Int): String = if (db <= 0) "Normal" else "+$db dB"
 
@@ -51,8 +51,9 @@ fun BoostPicker(current: Int, onPick: (Int) -> Unit, modifier: Modifier = Modifi
         }
         Spacer(Modifier.height(8.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            val nearest = BoostSteps.minByOrNull { kotlin.math.abs(it - current) } ?: 0
             BoostSteps.forEach { db ->
-                val selected = db == current
+                val selected = db == nearest
                 Box(
                     Modifier
                         .weight(1f)

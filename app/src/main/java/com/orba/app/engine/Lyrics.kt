@@ -28,7 +28,8 @@ data class LyricsResult(
 object Lyrics {
 
     suspend fun load(context: Context, song: Video): LyricsResult? = withContext(Dispatchers.IO) {
-        val cache = File(File(context.filesDir, "lyrics").apply { mkdirs() }, "${song.id}.json")
+        // v2: la letra se elige según la duración de la canción (antes podía quedar otra versión)
+        val cache = File(File(context.filesDir, "lyrics").apply { mkdirs() }, "${song.id}.v2.json")
         if (cache.exists()) {
             runCatching { return@withContext fromJson(JSONObject(cache.readText())) }
         }
@@ -54,6 +55,7 @@ object Lyrics {
 
     fun clearCache(context: Context, id: Long) {
         File(context.filesDir, "lyrics/$id.json").delete()
+        File(context.filesDir, "lyrics/$id.v2.json").delete()
     }
 
     // ---------- Buscar artista y canción a partir del título ----------
@@ -82,24 +84,44 @@ object Lyrics {
             ?: findOnLetras(artist, track)?.let { null to it }
             ?: findOnLyricsOvh(artist, track)?.let { null to it }
 
+    /**
+     * LRCLIB tiene varias versiones de una misma canción (álbum, radio, en vivo…) y cada una con
+     * sus tiempos. Se elige la que más se parece en duración a lo que suena: así la letra va
+     * al ritmo. Primero la búsqueda exacta; si no, todas las coincidencias, ordenadas por duración.
+     */
     private fun findOnLrclib(artist: String?, track: String, durationSec: Int): Pair<String?, String?>? {
-        // 1) Búsqueda exacta por artista + canción
-        if (artist != null) {
-            val q = "artist_name=${enc(artist)}&track_name=${enc(track)}" + if (durationSec > 0) "&duration=$durationSec" else ""
+        if (artist != null && durationSec > 0) {
+            val q = "artist_name=${enc(artist)}&track_name=${enc(track)}&duration=$durationSec"
             httpGet("https://lrclib.net/api/get?$q")?.let { body ->
-                runCatching { JSONObject(body) }.getOrNull()?.let { o -> pick(o)?.let { return it } }
+                runCatching { JSONObject(body) }.getOrNull()?.let { o -> pick(o)?.takeIf { it.first != null }?.let { return it } }
             }
         }
-        // 2) Búsqueda libre
-        val q = listOfNotNull(artist, track).joinToString(" ")
-        httpGet("https://lrclib.net/api/search?q=${enc(q)}")?.let { body ->
-            val arr = runCatching { JSONArray(body) }.getOrNull() ?: return null
-            for (i in 0 until minOf(arr.length(), 8)) {
-                pick(arr.getJSONObject(i))?.let { return it }
-            }
+        val candidates = mutableListOf<JSONObject>()
+        val queries = buildList {
+            if (artist != null) add("track_name=${enc(track)}&artist_name=${enc(artist)}")
+            add("q=${enc(listOfNotNull(artist, track).joinToString(" "))}")
         }
-        return null
+        for (q in queries) {
+            httpGet("https://lrclib.net/api/search?$q")?.let { body ->
+                val arr = runCatching { JSONArray(body) }.getOrNull() ?: return@let
+                for (i in 0 until minOf(arr.length(), 15)) arr.optJSONObject(i)?.let { candidates += it }
+            }
+            if (candidates.any { durationSec > 0 && it.hasSynced() && it.durationGap(durationSec) <= 3 }) break
+        }
+        if (candidates.isEmpty()) return null
+        fun gap(o: JSONObject) = if (durationSec > 0) o.durationGap(durationSec) else 0.0
+        // 1) Sincronizada con casi la misma duración  2) cualquier sincronizada cercana
+        // 3) solo texto  4) la sincronizada más cercana (se puede ajustar a mano)
+        candidates.filter { it.hasSynced() && gap(it) <= 3 }.minByOrNull { gap(it) }?.let { pick(it)?.let { r -> return r } }
+        candidates.filter { it.hasSynced() && gap(it) <= 8 }.minByOrNull { gap(it) }?.let { pick(it)?.let { r -> return r } }
+        candidates.firstOrNull { !it.hasSynced() && it.optString("plainLyrics").let { p -> p.isNotBlank() && p != "null" } }
+            ?.let { o -> if (candidates.none { it.hasSynced() && gap(it) <= 20 }) return null to o.optString("plainLyrics") }
+        candidates.filter { it.hasSynced() }.minByOrNull { gap(it) }?.let { pick(it)?.let { r -> return r } }
+        return candidates.firstNotNullOfOrNull { pick(it) }
     }
+
+    private fun JSONObject.hasSynced(): Boolean = optString("syncedLyrics").let { it.isNotBlank() && it != "null" }
+    private fun JSONObject.durationGap(sec: Int): Double = kotlin.math.abs(optDouble("duration", 0.0) - sec)
 
     // ---------- Letras.com ----------
 
@@ -177,7 +199,15 @@ object Lyrics {
 
     private val lrcLine = Regex("""\[(\d+):(\d+)(?:[.:](\d+))?]""")
 
-    private fun parseLrc(lrc: String): List<LyricLine> =
+    private val lrcOffset = Regex("""\[offset:\s*([+-]?\d+)\s*]""", RegexOption.IGNORE_CASE)
+
+    private fun parseLrc(lrc: String): List<LyricLine> {
+        // Algunas letras traen su propio ajuste ([offset:+300] = salir 0,3 s antes)
+        val shift = lrcOffset.find(lrc)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
+        return parseLrcLines(lrc).map { l -> l.copy(timeMs = l.timeMs?.let { (it - shift).coerceAtLeast(0) }) }
+    }
+
+    private fun parseLrcLines(lrc: String): List<LyricLine> =
         lrc.lines().mapNotNull { line ->
             val m = lrcLine.find(line) ?: return@mapNotNull null
             val min = m.groupValues[1].toLong()

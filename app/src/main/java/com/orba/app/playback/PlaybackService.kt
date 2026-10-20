@@ -2,7 +2,6 @@ package com.orba.app.playback
 
 import android.app.PendingIntent
 import android.content.Context
-import android.media.audiofx.LoudnessEnhancer
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.exoplayer.audio.AudioSink
@@ -98,7 +97,7 @@ class PlaybackService : MediaSessionService() {
             ): AudioSink? = DefaultAudioSink.Builder(context)
                 .setEnableFloatOutput(enableFloatOutput)
                 .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
-                .setAudioProcessors(arrayOf<AudioProcessor>(TeeAudioProcessor(LevelsSink)))
+                .setAudioProcessors(arrayOf<AudioProcessor>(TeeAudioProcessor(LevelsSink), booster))
                 .build()
         }
 
@@ -163,26 +162,11 @@ class PlaybackService : MediaSessionService() {
 
     // ---------- Refuerzo de volumen (por video o canción) ----------
 
-    private var enhancer: LoudnessEnhancer? = null
-    private var enhancerSession = C.AUDIO_SESSION_ID_UNSET
-    private var boostDb = 0
+    /** Sube el volumen dentro del propio reproductor (sirve igual para videos y canciones). */
+    private val booster = BoostProcessor()
 
-    /** Sube el volumen de lo que suena (sin distorsionar: el sistema limita los picos). */
     private fun applyBoost(db: Int) {
-        boostDb = db.coerceIn(0, MAX_BOOST_DB)
-        val session = player.audioSessionId
-        if (session == C.AUDIO_SESSION_ID_UNSET) return
-        if (enhancer == null || enhancerSession != session) {
-            runCatching { enhancer?.release() }
-            enhancer = runCatching { LoudnessEnhancer(session) }.getOrNull()
-            enhancerSession = session
-        }
-        enhancer?.let { e ->
-            runCatching {
-                e.setTargetGain(boostDb * 100)
-                e.setEnabled(boostDb > 0)
-            }
-        }
+        booster.targetDb = db.coerceIn(0, MAX_BOOST_DB)
     }
 
     private fun loadBoostFor(id: Long) {
@@ -211,8 +195,6 @@ class PlaybackService : MediaSessionService() {
         PlaybackControl.onNext = null
         PlaybackControl.onPrevious = null
         PlaybackControl.onBoost = null
-        runCatching { enhancer?.release() }
-        enhancer = null
         savePosition()
         session?.run {
             player.release()
@@ -375,11 +357,6 @@ class PlaybackService : MediaSessionService() {
             applyRepeat()
         }
 
-        override fun onAudioSessionIdChanged(audioSessionId: Int) {
-            runCatching { enhancer?.release() }
-            enhancer = null
-            applyBoost(boostDb)
-        }
 
         /** El tamaño real del video corrige si es vertical u horizontal. */
         override fun onVideoSizeChanged(videoSize: VideoSize) {
@@ -482,7 +459,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     companion object {
-        const val MAX_BOOST_DB = 12
+        const val MAX_BOOST_DB = 20
         private const val CMD_NEXT = "orba.NEXT"
         private const val CMD_PREV = "orba.PREV"
     }

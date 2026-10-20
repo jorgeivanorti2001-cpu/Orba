@@ -1,6 +1,14 @@
 package com.orba.app.ui.components
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Visibility
+import androidx.compose.material.icons.rounded.VisibilityOff
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -47,7 +55,11 @@ import com.orba.app.ui.theme.Mint
 import com.orba.app.ui.theme.darkGlass
 import com.orba.app.ui.theme.glass
 
-/** Fila de categorías en forma de "píldoras" de vidrio. */
+/**
+ * Fila de categorías en forma de "píldoras" de vidrio.
+ * Con [onPick]: mantener oprimida una categoría empieza a elegir varias ([picked]); las
+ * ocultas ([hidden]) se ven tachadas y más transparentes.
+ */
 @Composable
 fun CategoryChips(
     categories: List<Category>,
@@ -57,25 +69,48 @@ fun CategoryChips(
     onDark: Boolean = false,
     /** Muestra la playlist especial "Me encanta" (favoritos). */
     showFavorites: Boolean = false,
+    hidden: Set<Long> = emptySet(),
+    /** Categorías elegidas con pulsación larga (null = no se está eligiendo). */
+    picked: Set<Long>? = null,
+    /** Mantener oprimida o tocar (mientras se elige) una categoría. */
+    onPick: ((Long) -> Unit)? = null,
 ) {
     LazyRow(
         modifier = modifier,
         contentPadding = PaddingValues(horizontal = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        item { GlassChip("Todos", filter == CategoryFilter.All, null, onDark) { onFilter(CategoryFilter.All) } }
+        item { GlassChip("Todos", picked == null && filter == CategoryFilter.All, null, onDark) { onFilter(CategoryFilter.All) } }
         if (showFavorites) item {
-            GlassChip("♥ Me encanta", filter == CategoryFilter.Favorites, null, onDark) { onFilter(CategoryFilter.Favorites) }
+            GlassChip("♥ Me encanta", picked == null && filter == CategoryFilter.Favorites, null, onDark) { onFilter(CategoryFilter.Favorites) }
         }
         items(categories, key = { it.id }) { c ->
-            GlassChip(c.name, filter == CategoryFilter.Only(c.id), Color(c.color), onDark) { onFilter(CategoryFilter.Only(c.id)) }
+            val selected = if (picked != null) c.id in picked
+            else filter == CategoryFilter.Only(c.id) || (filter is CategoryFilter.Many && c.id in filter.ids)
+            GlassChip(
+                c.name, selected, Color(c.color), onDark,
+                hidden = c.id in hidden,
+                onLongClick = onPick?.let { pick -> { pick(c.id) } },
+            ) {
+                if (picked != null && onPick != null) onPick(c.id) else onFilter(CategoryFilter.Only(c.id))
+            }
         }
-        item { GlassChip("Sin categoría", filter == CategoryFilter.None, null, onDark) { onFilter(CategoryFilter.None) } }
+        item { GlassChip("Sin categoría", picked == null && filter == CategoryFilter.None, null, onDark) { onFilter(CategoryFilter.None) } }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun GlassChip(label: String, selected: Boolean, dot: Color?, onDark: Boolean = false, onClick: () -> Unit) {
+fun GlassChip(
+    label: String,
+    selected: Boolean,
+    dot: Color?,
+    onDark: Boolean = false,
+    /** Oculta: se ve tachada y más transparente. */
+    hidden: Boolean = false,
+    onLongClick: (() -> Unit)? = null,
+    onClick: () -> Unit,
+) {
     val shape = RoundedCornerShape(50)
     val base = when {
         selected -> Modifier
@@ -86,7 +121,8 @@ fun GlassChip(label: String, selected: Boolean, dot: Color?, onDark: Boolean = f
     }
     Row(
         base
-            .clickable(onClick = onClick)
+            .alpha(if (hidden && !selected) 0.45f else 1f)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(horizontal = 11.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -96,12 +132,69 @@ fun GlassChip(label: String, selected: Boolean, dot: Color?, onDark: Boolean = f
         }
         Text(
             label,
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.labelMedium.copy(textDecoration = if (hidden) TextDecoration.LineThrough else null),
             color = Color.White,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.widthIn(max = 160.dp),
         )
+    }
+}
+
+/**
+ * Barra que aparece al elegir categorías con pulsación larga: ocultarlas de "Todos"
+ * (o mostrarlas otra vez) y reproducir solo las elegidas.
+ */
+@Composable
+fun CategoryPickBar(
+    count: Int,
+    allHidden: Boolean,
+    onHide: () -> Unit,
+    onPlay: () -> Unit,
+    onCancel: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier
+            .padding(horizontal = 12.dp)
+            .glass(RoundedCornerShape(18.dp), strength = 1.4f, tint = Coral)
+            .padding(start = 4.dp, end = 6.dp, top = 2.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier.size(40.dp).clip(CircleShape).clickable(onClick = onCancel),
+            contentAlignment = Alignment.Center,
+        ) { Icon(Icons.Rounded.Close, "Cancelar", tint = Color.White) }
+        Text(
+            if (count == 1) "1 categoría" else "$count categorías",
+            style = MaterialTheme.typography.titleSmall,
+            maxLines = 1,
+            modifier = Modifier.weight(1f),
+        )
+        Row(
+            Modifier
+                .clip(RoundedCornerShape(12.dp))
+                .clickable(enabled = count > 0, onClick = onHide)
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(if (allHidden) Icons.Rounded.Visibility else Icons.Rounded.VisibilityOff, null, tint = Color.White, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(4.dp))
+            Text(if (allHidden) "Mostrar" else "Ocultar", style = MaterialTheme.typography.labelLarge, color = Color.White)
+        }
+        Spacer(Modifier.width(4.dp))
+        Row(
+            Modifier
+                .clip(RoundedCornerShape(12.dp))
+                .background(Brush.horizontalGradient(BrandGradient))
+                .clickable(enabled = count > 0, onClick = onPlay)
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Rounded.PlayArrow, null, tint = Color.White, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(4.dp))
+            Text("Reproducir", style = MaterialTheme.typography.labelLarge, color = Color.White)
+        }
     }
 }
 

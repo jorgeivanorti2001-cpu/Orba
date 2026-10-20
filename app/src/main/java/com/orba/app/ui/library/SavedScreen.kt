@@ -93,6 +93,7 @@ fun SavedScreen(
                 CategoryFilter.None -> v.categoryId == null
                 CategoryFilter.Favorites -> v.favorite
                 is CategoryFilter.Only -> v.categoryId == f.id
+                is CategoryFilter.Many -> v.categoryId in f.ids
             }
         }
         .sortedByDescending { it.fileSizeBytes }

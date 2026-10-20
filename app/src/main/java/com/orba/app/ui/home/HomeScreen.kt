@@ -24,6 +24,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Notes
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.TravelExplore
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material.icons.rounded.CloudDone
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.SmartDisplay
@@ -130,7 +133,7 @@ fun HomeScreen(vm: MainViewModel, onAdd: () -> Unit, modifier: Modifier = Modifi
         Row(verticalAlignment = Alignment.CenterVertically) {
             Image(painterResource(R.drawable.orba_emblem), null, Modifier.size(60.dp))
             Spacer(Modifier.width(12.dp))
-            Column {
+            Column(Modifier.weight(1f)) {
                 // El nombre con la misma letra del logo (la A sin travesaño)
                 Image(painterResource(R.drawable.orba_wordmark), "Orba", Modifier.height(17.dp).aspectRatio(6.65f))
                 Spacer(Modifier.height(6.dp))
@@ -141,6 +144,40 @@ fun HomeScreen(vm: MainViewModel, onAdd: () -> Unit, modifier: Modifier = Modifi
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+            }
+            // Agregar: pegar enlaces o buscar en internet
+            Box {
+                var addMenu by remember { mutableStateOf(false) }
+                Box(
+                    Modifier
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .background(Brush.linearGradient(BrandGradient))
+                        .clickable { addMenu = true },
+                    contentAlignment = Alignment.Center,
+                ) { Icon(Icons.Rounded.Add, "Agregar", tint = Color.White) }
+                DropdownMenu(expanded = addMenu, onDismissRequest = { addMenu = false }) {
+                    if (vm.showVideo) DropdownMenuItem(
+                        text = { Text("Pegar enlaces de videos") },
+                        leadingIcon = { Icon(Icons.Rounded.SmartDisplay, null) },
+                        onClick = { addMenu = false; vm.openAdd(Kind.VIDEO) },
+                    )
+                    if (showMusic) DropdownMenuItem(
+                        text = { Text("Pegar enlaces de canciones") },
+                        leadingIcon = { Icon(Icons.Rounded.MusicNote, null) },
+                        onClick = { addMenu = false; vm.openAdd(Kind.AUDIO) },
+                    )
+                    if (vm.showVideo) DropdownMenuItem(
+                        text = { Text("Buscar videos en internet") },
+                        leadingIcon = { Icon(Icons.Rounded.TravelExplore, null) },
+                        onClick = { addMenu = false; vm.openWebSearch(Kind.VIDEO) },
+                    )
+                    if (showMusic) DropdownMenuItem(
+                        text = { Text("Buscar canciones en internet") },
+                        leadingIcon = { Icon(Icons.Rounded.TravelExplore, null) },
+                        onClick = { addMenu = false; vm.openWebSearch(Kind.AUDIO) },
+                    )
+                }
             }
         }
 

@@ -38,6 +38,8 @@ sealed interface CategoryFilter {
     /** Solo los marcados con "Me encanta". */
     data object Favorites : CategoryFilter
     data class Only(val id: Long) : CategoryFilter
+    /** Varias categorías elegidas a la vez (pulsación larga sobre las categorías). */
+    data class Many(val ids: Set<Long>) : CategoryFilter
 }
 
 object Tab {
@@ -89,13 +91,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val feedOffline = MutableStateFlow(false)
     val feedShuffleSeed = MutableStateFlow<Long?>(null)
 
-    val feed: StateFlow<List<Video>> = combine(videos, filter, feedOffline, feedShuffleSeed) { list, f, offline, seed ->
-        val filtered = applyFilter(list, f).let { l -> if (offline) l.filter { it.downloadState == com.orba.app.data.DownloadState.DONE } else l }
+    /** Categorías ocultas: se siguen viendo, pero "Todos" (y reproducir todo) las salta. */
+    val hiddenCategories: StateFlow<Set<Long>> = prefs.hiddenCategories
+
+    val feed: StateFlow<List<Video>> = combine(videos, filter, feedOffline, feedShuffleSeed, prefs.hiddenCategories) { list, f, offline, seed, hidden ->
+        val filtered = applyFilter(list, f, hidden).let { l -> if (offline) l.filter { it.downloadState == com.orba.app.data.DownloadState.DONE } else l }
         if (seed != null) filtered.shuffled(java.util.Random(seed)) else filtered
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    private fun applyFilter(list: List<Video>, f: CategoryFilter): List<Video> = when (f) {
-        CategoryFilter.All -> list
+    private fun applyFilter(list: List<Video>, f: CategoryFilter, hidden: Set<Long> = emptySet()): List<Video> = when (f) {
+        CategoryFilter.All -> if (hidden.isEmpty()) list else list.filter { it.categoryId == null || it.categoryId !in hidden }
+        is CategoryFilter.Many -> list.filter { it.categoryId in f.ids }
         CategoryFilter.None -> list.filter { it.categoryId == null }
         CategoryFilter.Favorites -> list.filter { it.favorite }
         is CategoryFilter.Only -> list.filter { it.categoryId == f.id }
@@ -131,20 +137,81 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Escuchar: filtro de playlist y lista resultante. */
     val audioFilter = MutableStateFlow<CategoryFilter>(CategoryFilter.All)
 
+    /** Desde el botón + del inicio: abrir el buscador de Escuchar o el de la Biblioteca. */
+    val listenSearchRequest = MutableStateFlow(false)
+    val librarySearchRequest = MutableStateFlow(false)
+
+    fun openWebSearch(kind: Int) {
+        if (kind == Kind.AUDIO) {
+            listenSearchRequest.value = true
+            tab.value = Tab.LISTEN
+        } else {
+            libraryKind.value = Kind.VIDEO
+            libraryNotesOnly.value = false
+            librarySearchRequest.value = true
+            tab.value = Tab.LIBRARY
+        }
+    }
+
     /** Lo que se escribe en el buscador de Escuchar (busca en todas las canciones). */
     val listenQuery = MutableStateFlow("")
 
-    val listenList: StateFlow<List<Video>> = combine(audios, audioFilter, prefs.listenSort, listenQuery) { list, f, sort, q ->
-        val base = if (q.isBlank()) applyFilter(list, f) else list.filter { it.matchesQuery(q) }
+    val listenList: StateFlow<List<Video>> = combine(audios, audioFilter, listenQuery, prefs.hiddenCategories) { list, f, q, hidden ->
+        val base = if (q.isBlank()) applyFilter(list, f, hidden) else list.filter { it.matchesQuery(q) }
         // Siempre de la A a la Z, con el índice de letras al costado
         base.sortedAz()
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Oculta (o vuelve a mostrar, si ya estaban todas ocultas) las categorías elegidas. */
+    fun toggleHidden(ids: Set<Long>) {
+        if (ids.isEmpty()) return
+        val now = prefs.hiddenCategories.value
+        val show = ids.all { it in now }
+        prefs.setHiddenCategories(if (show) now - ids else now + ids)
+        toast(
+            when {
+                show -> if (ids.size == 1) "Categoría visible otra vez" else "Categorías visibles otra vez"
+                ids.size == 1 -> "Categoría oculta: «Todos» la salta"
+                else -> "Categorías ocultas: «Todos» las salta"
+            }
+        )
+    }
+
+    /** Ver solo los videos de varias categorías elegidas. */
+    fun playVideoCategories(ids: Set<Long>) {
+        if (ids.isEmpty()) return
+        exitOfflineFeed()
+        filter.value = if (ids.size == 1) CategoryFilter.Only(ids.first()) else CategoryFilter.Many(ids)
+        tab.value = Tab.FEED
+    }
+
+    /** Canciones de varias categorías elegidas, de la A a la Z (para reproducirlas como cola). */
+    fun songsOf(ids: Set<Long>): List<Video> {
+        audioFilter.value = if (ids.size == 1) CategoryFilter.Only(ids.first()) else CategoryFilter.Many(ids)
+        return audios.value.filter { it.categoryId in ids }.sortedAz()
+    }
 
     /** Pasa varias canciones (o videos) a una categoría de una sola vez. */
     fun moveToCategory(ids: Collection<Long>, categoryId: Long?) = viewModelScope.launch {
         if (ids.isEmpty()) return@launch
         repo.setCategoryMany(ids, categoryId)
         toast(if (ids.size == 1) "Listo" else "Se movieron ${ids.size}")
+    }
+
+    /** Descarga varias de una vez para tenerlas sin conexión (las que ya están guardadas se saltan). */
+    fun downloadMany(ids: Collection<Long>) = viewModelScope.launch {
+        val pending = allItems.value.filter {
+            it.id in ids && !it.isDownloaded() && it.platform != Engine.PLATFORM_LOCAL &&
+                it.downloadState != com.orba.app.data.DownloadState.QUEUED && it.downloadState != com.orba.app.data.DownloadState.DOWNLOADING
+        }
+        pending.forEach { Downloads.enqueue(getApplication(), it.id) }
+        toast(
+            when (pending.size) {
+                0 -> "Ya estaban guardadas"
+                1 -> "Descargando 1 para escuchar sin conexión"
+                else -> "Descargando ${pending.size} para escuchar sin conexión"
+            }
+        )
     }
 
     /** Borra varias de una vez (con sus descargas y notas). */

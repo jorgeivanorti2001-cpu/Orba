@@ -100,6 +100,7 @@ fun OfflineScreen(
         CategoryFilter.None -> saved.filter { it.categoryId == null }
         CategoryFilter.Favorites -> saved.filter { it.favorite }
         is CategoryFilter.Only -> saved.filter { it.categoryId == f.id }
+        is CategoryFilter.Many -> saved.filter { it.categoryId in f.ids }
     }
     val categories = if (kind == Kind.AUDIO) audioCategories else videoCategories
 

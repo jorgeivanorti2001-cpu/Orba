@@ -4,6 +4,17 @@ Tus videos y tu música a tu manera, sin algoritmos, sin anuncios, siempre conti
 
 Una sola app con las dos secciones: **Ver** (videos tipo reels, sin algoritmo) y **Escuchar** (música con cola, letra y segundo plano).
 
+## Novedades 4.1
+
+- Animación de la música a elegir (ícono de ecualizador arriba a la derecha en la pantalla de la canción): ondas que salen de la carátula, notas musicales, espectro sobre la carátula o barras debajo. Todas siguen el ritmo, menos las notas. Colores: los de Orba, los de la carátula, blanco, negro o gris claro.
+- Subir volumen ahora funciona también en la música y llega hasta +20 dB, con limitador para que no se rompa el sonido.
+- Letra: se elige la versión con la misma duración de la canción. Si aun así va desfasada, «Sincronizar» → toca la línea que se está cantando (o ±0,5 s). Se recuerda por canción.
+- Al elegir varias canciones aparece «Descargar».
+- Mantener oprimida una categoría (Biblioteca y Escuchar): ocultarla de «Todos» o reproducir solo las elegidas.
+- Botón + en el inicio: pegar enlaces o buscar en internet.
+- Descargas por partes (más rápidas) y prioridad para el video o canción que estás abriendo.
+- Valores al instalar: videos 720p, sin descargar al agregar, solo con Wi-Fi, en bucle; música en ahorro, descargando al agregar y solo con Wi-Fi.
+
 ## Novedades 4.0
 
 - Todo se llama Orba: nombre, ícono, logo y paquete (`com.orba.app`).

@@ -44,9 +44,12 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import com.orba.app.data.isLocal
 import com.orba.app.ui.components.CategoryPickerDialog
+import com.orba.app.ui.components.CategoryPickBar
 import com.orba.app.ui.components.BoostPicker
 import com.orba.app.ui.components.boostLabel
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
+import androidx.compose.material.icons.rounded.GraphicEq
+import androidx.compose.material.icons.rounded.Download
 import com.orba.app.ui.components.WebSearchSection
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
@@ -190,6 +193,10 @@ fun ListenScreen(
     val query by vm.listenQuery.collectAsStateWithLifecycle()
     val importing by vm.importing.collectAsStateWithLifecycle()
     val adding by vm.adding.collectAsStateWithLifecycle()
+    val hidden by vm.hiddenCategories.collectAsStateWithLifecycle()
+    // Categorías elegidas con pulsación larga (para ocultarlas o reproducir solo esas)
+    var picking by remember { mutableStateOf<Set<Long>?>(null) }
+    val searchRequest by vm.listenSearchRequest.collectAsStateWithLifecycle()
     var managing by remember { mutableStateOf(false) }
     var searching by rememberSaveable { mutableStateOf(false) }
     var addMenu by remember { mutableStateOf(false) }
@@ -207,8 +214,16 @@ fun ListenScreen(
     }
 
     fun closeSearch() { searching = false; vm.listenQuery.value = "" }
-    BackHandler(enabled = searching || selecting) {
-        if (selecting) { selecting = false; selected = emptySet() } else closeSearch()
+    // Desde el botón + del inicio: abrir directamente el buscador
+    LaunchedEffect(searchRequest) {
+        if (searchRequest) { searching = true; vm.listenSearchRequest.value = false }
+    }
+    BackHandler(enabled = searching || selecting || picking != null) {
+        when {
+            picking != null -> picking = null
+            selecting -> { selecting = false; selected = emptySet() }
+            else -> closeSearch()
+        }
     }
 
     Column(modifier.fillMaxSize().statusBarsPadding()) {
@@ -287,7 +302,26 @@ fun ListenScreen(
             )
         } else {
             Spacer(Modifier.height(12.dp))
-            CategoryChips(categories, filter, { vm.audioFilter.value = it }, showFavorites = true)
+            CategoryChips(
+                categories, filter, { vm.audioFilter.value = it }, showFavorites = true,
+                hidden = hidden,
+                picked = picking,
+                onPick = { id -> picking = (picking ?: emptySet()).let { if (id in it) it - id else it + id }.takeIf { it.isNotEmpty() } },
+            )
+            picking?.let { ids ->
+                Spacer(Modifier.height(8.dp))
+                CategoryPickBar(
+                    count = ids.size,
+                    allHidden = ids.all { it in hidden },
+                    onHide = { vm.toggleHidden(ids); picking = null },
+                    onPlay = {
+                        val songs = vm.songsOf(ids)
+                        if (songs.isNotEmpty()) startAudio(player, songs, if (shuffle) songs.random().id else songs.first().id, shuffle)
+                        picking = null
+                    },
+                    onCancel = { picking = null },
+                )
+            }
         }
         Spacer(Modifier.height(12.dp))
 
@@ -303,6 +337,7 @@ fun ListenScreen(
                         onAll = { selected = if (selected.size == list.size) emptySet() else list.map { it.id }.toSet() },
                         onMove = { moveOpen = true },
                         onGenres = { genreFor = list.filter { it.id in selected } },
+                        onDownload = { vm.downloadMany(selected); selecting = false; selected = emptySet() },
                         onDelete = { deleteOpen = true },
                         onCancel = { selecting = false; selected = emptySet() },
                     )
@@ -575,6 +610,7 @@ private fun SelectionBar(
     onAll: () -> Unit,
     onMove: () -> Unit,
     onGenres: () -> Unit,
+    onDownload: () -> Unit,
     onDelete: () -> Unit,
     onCancel: () -> Unit,
 ) {
@@ -591,11 +627,15 @@ private fun SelectionBar(
             if (count == 1) "1 elegida" else "$count elegidas",
             style = MaterialTheme.typography.titleSmall,
             modifier = Modifier.weight(1f),
+            maxLines = 1,
         )
         TextButton(onClick = onAll) { Text(if (allSelected) "Ninguna" else "Todas") }
-        IconButton(onClick = onGenres, enabled = count > 0) { Icon(Icons.Rounded.AutoAwesome, "Sugerir género", tint = if (count > 0) Coral else Color.Gray) }
-        IconButton(onClick = onMove, enabled = count > 0) { Icon(Icons.Rounded.DriveFileMove, "Mover a categoría", tint = if (count > 0) Coral else Color.Gray) }
-        IconButton(onClick = onDelete, enabled = count > 0) {
+        IconButton(onClick = onDownload, enabled = count > 0, modifier = Modifier.size(40.dp)) {
+            Icon(Icons.Rounded.Download, "Descargar para escuchar sin conexión", tint = if (count > 0) Mint else Color.Gray)
+        }
+        IconButton(onClick = onGenres, enabled = count > 0, modifier = Modifier.size(40.dp)) { Icon(Icons.Rounded.AutoAwesome, "Sugerir género", tint = if (count > 0) Coral else Color.Gray) }
+        IconButton(onClick = onMove, enabled = count > 0, modifier = Modifier.size(40.dp)) { Icon(Icons.Rounded.DriveFileMove, "Mover a categoría", tint = if (count > 0) Coral else Color.Gray) }
+        IconButton(onClick = onDelete, enabled = count > 0, modifier = Modifier.size(40.dp)) {
             Icon(Icons.Rounded.DeleteOutline, "Eliminar", tint = if (count > 0) MaterialTheme.colorScheme.error else Color.Gray)
         }
     }
@@ -805,6 +845,13 @@ fun NowPlayingScreen(
 ) {
     BackHandler(onBack = onClose)
     var boostOpen by remember { mutableStateOf(false) }
+    var vizOpen by remember { mutableStateOf(false) }
+    val vizMode by prefs.vizMode.collectAsStateWithLifecycle()
+    val vizColor by prefs.vizColor.collectAsStateWithLifecycle()
+    val coverColors = rememberCoverColors(song)
+    val palette = vizPalette(vizColor, coverColors)
+    // Ajuste de sincronización de la letra de esta canción (se recuerda)
+    var lyricsOffset by remember(song.id) { mutableLongStateOf(prefs.lyricsOffset(song.id)) }
     val context = LocalContext.current
     val shuffle by prefs.shuffle.collectAsStateWithLifecycle()
     val repeat by prefs.audioRepeat.collectAsStateWithLifecycle()
@@ -850,22 +897,46 @@ fun NowPlayingScreen(
                     modifier = Modifier.weight(1f),
                     textAlign = TextAlign.Center,
                 )
-                Spacer(Modifier.size(48.dp))
+                // Estilo y color de la animación de la música
+                Box {
+                    IconButton(onClick = { vizOpen = true }) {
+                        Icon(Icons.Rounded.GraphicEq, "Animación de la música", tint = Color.White.copy(alpha = 0.85f))
+                    }
+                    DropdownMenu(
+                        expanded = vizOpen,
+                        onDismissRequest = { vizOpen = false },
+                        containerColor = Color(0xFF161827),
+                        shape = RoundedCornerShape(18.dp),
+                    ) {
+                        VisualizerMenu(
+                            mode = vizMode,
+                            color = vizColor,
+                            coverColors = coverColors,
+                            onMode = { prefs.setVizMode(it) },
+                            onColor = { prefs.setVizColor(it) },
+                        )
+                    }
+                }
             }
             Spacer(Modifier.height(18.dp))
 
-            // La carátula late con los graves y las ondas salen con cada golpe de la canción
+            // La animación elegida: ondas, notas, espectro sobre la carátula o barras debajo
             val pulse = rememberAudioPulse(playing)
+            val beats = vizMode == Prefs.VIZ_WAVES || vizMode == Prefs.VIZ_BARS
             Box(Modifier.fillMaxWidth().aspectRatio(1f), contentAlignment = Alignment.Center) {
-                MusicVisualizer(pulse, coverFraction = 0.68f, modifier = Modifier.fillMaxSize(), cornerFraction = 0.113f)
+                MusicVisualizer(pulse, vizMode, palette, coverFraction = 0.68f, modifier = Modifier.fillMaxSize(), cornerFraction = 0.113f)
                 Cover(
                     song,
                     Modifier.fillMaxWidth(0.68f).aspectRatio(1f).graphicsLayer {
-                        val s = 1f + 0.035f * pulse.bass
+                        // La carátula late con los graves (solo con ondas y barras)
+                        val s = if (beats) 1f + 0.035f * pulse.bass else 1f
                         scaleX = s; scaleY = s
                     },
                     RoundedCornerShape(28.dp),
                 )
+                if (vizMode == Prefs.VIZ_SPECTRUM) {
+                    SpectrumOverCover(pulse, palette, coverFraction = 0.68f, modifier = Modifier.fillMaxSize())
+                }
             }
             Spacer(Modifier.height(8.dp))
 
@@ -996,9 +1067,14 @@ fun NowPlayingScreen(
                 lyrics = lyrics,
                 loading = loadingLyrics,
                 positionMs = position,
+                offsetMs = lyricsOffset,
+                onOffset = { ms ->
+                    lyricsOffset = ms
+                    prefs.setLyricsOffset(song.id, ms)
+                },
                 showTranslation = showTranslation,
                 onToggleTranslation = { showTranslation = !showTranslation },
-                onSeek = { ms -> player.seekTo(ms); player.play() },
+                onSeek = { ms -> player.seekTo(ms.coerceAtLeast(0)); player.play() },
             )
             Spacer(Modifier.height(32.dp))
         }
@@ -1046,6 +1122,8 @@ private fun LyricsCard(
     lyrics: LyricsResult?,
     loading: Boolean,
     positionMs: Long,
+    offsetMs: Long,
+    onOffset: (Long) -> Unit,
     showTranslation: Boolean,
     onToggleTranslation: () -> Unit,
     onSeek: (Long) -> Unit,
@@ -1056,8 +1134,17 @@ private fun LyricsCard(
             .glass(RoundedCornerShape(24.dp), strength = 1.1f)
             .padding(18.dp),
     ) {
+        var syncing by remember { mutableStateOf(false) }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Letra", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            if (lyrics?.synced == true) {
+                Text(
+                    if (syncing) "Listo" else "Sincronizar",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (syncing) Mint else Coral,
+                    modifier = Modifier.clip(RoundedCornerShape(50)).clickable { syncing = !syncing }.padding(horizontal = 8.dp, vertical = 4.dp),
+                )
+            }
             val hasTranslation = lyrics?.lines?.any { it.translation != null } == true
             if (hasTranslation) {
                 Text(
@@ -1065,6 +1152,37 @@ private fun LyricsCard(
                     style = MaterialTheme.typography.labelLarge,
                     color = Coral,
                     modifier = Modifier.clip(RoundedCornerShape(50)).clickable(onClick = onToggleTranslation).padding(horizontal = 8.dp, vertical = 4.dp),
+                )
+            }
+        }
+        // Ajuste fino: toca la línea que se está cantando, o adelanta / atrasa medio segundo
+        if (syncing && lyrics?.synced == true) {
+            Text(
+                "Toca la línea que se está cantando ahora y la letra se acomoda. También puedes moverla de a medio segundo.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 6.dp),
+            )
+            Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("−0,5 s" to -500L, "+0,5 s" to 500L).forEach { (label, delta) ->
+                    Text(
+                        label,
+                        style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier.clip(RoundedCornerShape(10.dp)).background(Color.White.copy(alpha = 0.08f))
+                            .clickable { onOffset(offsetMs + delta) }.padding(horizontal = 12.dp, vertical = 6.dp),
+                    )
+                }
+                Text(
+                    if (offsetMs == 0L) "Sin ajuste" else "Ajuste: %+.1f s".format(offsetMs / 1000f),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+                if (offsetMs != 0L) Text(
+                    "Quitar",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = Coral,
+                    modifier = Modifier.clip(RoundedCornerShape(10.dp)).clickable { onOffset(0L) }.padding(horizontal = 8.dp, vertical = 6.dp),
                 )
             }
         }
@@ -1082,7 +1200,7 @@ private fun LyricsCard(
             )
             lyrics.synced -> {
                 val lines = lyrics.lines
-                val current = lines.indexOfLast { (it.timeMs ?: Long.MAX_VALUE) <= positionMs + 300 }
+                val current = lines.indexOfLast { l -> l.timeMs?.let { it + offsetMs <= positionMs + 300 } ?: false }
                 val listState = rememberLazyListState()
                 LaunchedEffect(current) {
                     if (current >= 0) listState.animateScrollToItem((current - 2).coerceAtLeast(0))
@@ -1094,7 +1212,9 @@ private fun LyricsCard(
                 ) {
                     itemsIndexed(lines) { i, line ->
                         LyricRow(line, isCurrent = i == current, past = i < current, showTranslation = showTranslation) {
-                            line.timeMs?.let(onSeek)
+                            val t = line.timeMs ?: return@LyricRow
+                            // En modo sincronizar, tocar una línea dice "esto es lo que suena ahora"
+                            if (syncing) onOffset(positionMs - t) else onSeek(t + offsetMs)
                         }
                     }
                 }

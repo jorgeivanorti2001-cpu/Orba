@@ -34,6 +34,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -80,6 +81,8 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import com.orba.app.ui.components.WebSearchSection
+import com.orba.app.ui.components.CategoryPickBar
+import androidx.compose.ui.focus.focusRequester
 import com.orba.app.ui.matchesQuery
 
 @Composable
@@ -112,6 +115,19 @@ fun LibraryScreen(
     val shuffle by vm.prefs.shuffle.collectAsStateWithLifecycle()
     var query by rememberSaveable { mutableStateOf("") }
     var managing by remember { mutableStateOf(false) }
+    val hidden by vm.hiddenCategories.collectAsStateWithLifecycle()
+    val searchFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+    val searchRequest by vm.librarySearchRequest.collectAsStateWithLifecycle()
+    LaunchedEffect(searchRequest) {
+        if (searchRequest) {
+            kotlinx.coroutines.delay(150)
+            runCatching { searchFocus.requestFocus() }
+            vm.librarySearchRequest.value = false
+        }
+    }
+    var picking by remember(kind) { mutableStateOf<Set<Long>?>(null) }
+    androidx.activity.compose.BackHandler(enabled = picking != null) { picking = null }
+    val pick: (Long) -> Unit = { id -> picking = (picking ?: emptySet()).let { if (id in it) it - id else it + id }.takeIf { it.isNotEmpty() } }
 
     val isAudio = kind == Kind.AUDIO
     // Al escribir se busca en todo (sin importar la categoría elegida), por cualquier parte del nombre
@@ -181,8 +197,9 @@ fun LibraryScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 12.dp)
-                .glass(RoundedCornerShape(18.dp)),
-            placeholder = { Text(if (isAudio) "Buscar canción o artista" else "Buscar video o canal") },
+                .glass(RoundedCornerShape(18.dp))
+                .focusRequester(searchFocus),
+            placeholder = { Text(if (isAudio) "Buscar canción o artista" else "Buscar video o canal (también en internet)") },
             leadingIcon = { Icon(Icons.Rounded.Search, null) },
             singleLine = true,
             colors = TextFieldDefaults.colors(
@@ -193,13 +210,34 @@ fun LibraryScreen(
             ),
         )
         if (isAudio) {
-            CategoryChips(audioCategories, audioFilter, { vm.audioFilter.value = it }, showFavorites = true)
+            CategoryChips(
+                audioCategories, audioFilter, { vm.audioFilter.value = it }, showFavorites = true,
+                hidden = hidden, picked = picking, onPick = pick,
+            )
         } else {
-            CategoryChips(categories, filter, { vm.filter.value = it })
+            CategoryChips(categories, filter, { vm.filter.value = it }, hidden = hidden, picked = picking, onPick = pick)
             Spacer(Modifier.height(8.dp))
             Row(Modifier.padding(horizontal = 12.dp)) {
                 GlassChip("Solo con notas", notesOnly, null) { vm.libraryNotesOnly.value = !notesOnly }
             }
+        }
+        picking?.let { ids ->
+            Spacer(Modifier.height(8.dp))
+            CategoryPickBar(
+                count = ids.size,
+                allHidden = ids.all { it in hidden },
+                onHide = { vm.toggleHidden(ids); picking = null },
+                onPlay = {
+                    if (isAudio) {
+                        val songs = vm.songsOf(ids)
+                        if (songs.isNotEmpty()) startAudio(player, songs, if (shuffle) songs.random().id else songs.first().id, shuffle)
+                    } else {
+                        vm.playVideoCategories(ids)
+                    }
+                    picking = null
+                },
+                onCancel = { picking = null },
+            )
         }
         Spacer(Modifier.height(8.dp))
 

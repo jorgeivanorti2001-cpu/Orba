@@ -47,6 +47,8 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
         if (video.isDownloaded()) return Result.success()
         if (video.platform == Engine.PLATFORM_LOCAL) return Result.failure()
 
+        // Si estás abriendo un video o canción, la descarga espera un momento para no quitarle velocidad
+        com.orba.app.engine.StreamResolver.awaitForegroundIdle()
         val notifId = NOTIF_BASE + id.toInt()
         runCatching { setForeground(foregroundInfo(notifId, video.title, -1f)) }
         dao.setDownload(id, DownloadState.DOWNLOADING, 0f, null)
@@ -62,6 +64,9 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
             addOption("-o", File(dir, "$id.%(ext)s").absolutePath)
             addOption("--no-mtime")
             addOption("-N", "4")
+            // Pide el archivo por partes de 10 MB: YouTube no frena la velocidad como con una sola petición larga
+            addOption("--http-chunk-size", "10M")
+            addOption("--socket-timeout", "15")
             if (extractorArgs != null) addOption("--extractor-args", extractorArgs)
         }
 
@@ -90,7 +95,7 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
                     if (isStopped || t is kotlinx.coroutines.CancellationException) throw t
                     lastError = t
                     if (!Engine.isRetryable(t)) break
-                    if (i == 0) Engine.updateOnce(applicationContext)
+                    if (i == 0) Engine.updateInBackground(applicationContext)
                 }
             }
             lastError?.let { throw it }

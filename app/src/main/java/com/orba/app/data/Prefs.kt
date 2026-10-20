@@ -12,10 +12,10 @@ class Prefs private constructor(context: Context) {
     private val _maxHeight = MutableStateFlow(sp.getInt(K_HEIGHT, 720))
     val maxHeight: StateFlow<Int> = _maxHeight.asStateFlow()
 
-    private val _autoDownload = MutableStateFlow(sp.getBoolean(K_AUTO, true))
+    private val _autoDownload = MutableStateFlow(sp.getBoolean(K_AUTO, false))
     val autoDownload: StateFlow<Boolean> = _autoDownload.asStateFlow()
 
-    private val _wifiOnly = MutableStateFlow(sp.getBoolean(K_WIFI, false))
+    private val _wifiOnly = MutableStateFlow(sp.getBoolean(K_WIFI, true))
     val wifiOnly: StateFlow<Boolean> = _wifiOnly.asStateFlow()
 
     private val _audioOnly = MutableStateFlow(sp.getBoolean(K_AUDIO, false))
@@ -38,10 +38,10 @@ class Prefs private constructor(context: Context) {
     // ---------- Audio (sección Escuchar): descargas y calidad propias ----------
     private val _autoDownloadAudio = MutableStateFlow(sp.getBoolean(K_AUTO_A, true))
     val autoDownloadAudio: StateFlow<Boolean> = _autoDownloadAudio.asStateFlow()
-    private val _wifiOnlyAudio = MutableStateFlow(sp.getBoolean(K_WIFI_A, false))
+    private val _wifiOnlyAudio = MutableStateFlow(sp.getBoolean(K_WIFI_A, true))
     val wifiOnlyAudio: StateFlow<Boolean> = _wifiOnlyAudio.asStateFlow()
     /** 0 = calidad normal, 1 = ahorro (pesa cerca de la mitad). */
-    private val _audioQuality = MutableStateFlow(sp.getInt(K_AQ, 0))
+    private val _audioQuality = MutableStateFlow(sp.getInt(K_AQ, 1))
     val audioQuality: StateFlow<Int> = _audioQuality.asStateFlow()
     fun setAutoDownloadAudio(v: Boolean) { sp.edit().putBoolean(K_AUTO_A, v).apply(); _autoDownloadAudio.value = v }
     fun setWifiOnlyAudio(v: Boolean) { sp.edit().putBoolean(K_WIFI_A, v).apply(); _wifiOnlyAudio.value = v }
@@ -69,6 +69,34 @@ class Prefs private constructor(context: Context) {
     private val _listenSort = MutableStateFlow(sp.getInt(K_SORT, SORT_RECENT))
     val listenSort: StateFlow<Int> = _listenSort.asStateFlow()
     fun setListenSort(v: Int) { sp.edit().putInt(K_SORT, v).apply(); _listenSort.value = v }
+
+    // ---------- Visualizador de la música (pantalla de la canción) ----------
+    /** [VIZ_WAVES], [VIZ_NOTES], [VIZ_SPECTRUM] (sobre la carátula) o [VIZ_BARS] (debajo). */
+    private val _vizMode = MutableStateFlow(sp.getInt(K_VIZ_MODE, VIZ_WAVES))
+    val vizMode: StateFlow<Int> = _vizMode.asStateFlow()
+    fun setVizMode(v: Int) { sp.edit().putInt(K_VIZ_MODE, v).apply(); _vizMode.value = v }
+
+    /** [VIZ_COLOR_APP], [VIZ_COLOR_COVER], [VIZ_COLOR_WHITE], [VIZ_COLOR_BLACK] o [VIZ_COLOR_GRAY]. */
+    private val _vizColor = MutableStateFlow(sp.getInt(K_VIZ_COLOR, VIZ_COLOR_APP))
+    val vizColor: StateFlow<Int> = _vizColor.asStateFlow()
+    fun setVizColor(v: Int) { sp.edit().putInt(K_VIZ_COLOR, v).apply(); _vizColor.value = v }
+
+    // ---------- Categorías ocultas (se ven, pero "reproducir todo" las salta) ----------
+    private val _hiddenCategories = MutableStateFlow(
+        sp.getStringSet(K_HIDDEN, emptySet()).orEmpty().mapNotNull { it.toLongOrNull() }.toSet()
+    )
+    val hiddenCategories: StateFlow<Set<Long>> = _hiddenCategories.asStateFlow()
+    fun setHiddenCategories(ids: Set<Long>) {
+        sp.edit().putStringSet(K_HIDDEN, ids.map { it.toString() }.toSet()).apply()
+        _hiddenCategories.value = ids
+    }
+
+    // ---------- Ajuste de sincronización de la letra, por canción (milisegundos) ----------
+    private val offsets = context.getSharedPreferences("lyrics_offsets", Context.MODE_PRIVATE)
+    fun lyricsOffset(songId: Long): Long = offsets.getLong(songId.toString(), 0L)
+    fun setLyricsOffset(songId: Long, ms: Long) {
+        offsets.edit().apply { if (ms == 0L) remove(songId.toString()) else putLong(songId.toString(), ms) }.apply()
+    }
 
     // ---------- Teléfonos a los que se dio acceso (JSON) ----------
     private val _grantedDevices = MutableStateFlow(sp.getString(K_GRANTED, "[]") ?: "[]")
@@ -117,6 +145,21 @@ class Prefs private constructor(context: Context) {
 
         const val SORT_RECENT = 0
         const val SORT_AZ = 1
+
+        const val VIZ_WAVES = 0
+        const val VIZ_NOTES = 1
+        const val VIZ_SPECTRUM = 2
+        const val VIZ_BARS = 3
+
+        const val VIZ_COLOR_APP = 0
+        const val VIZ_COLOR_COVER = 1
+        const val VIZ_COLOR_WHITE = 2
+        const val VIZ_COLOR_BLACK = 3
+        const val VIZ_COLOR_GRAY = 4
+
+        private const val K_VIZ_MODE = "vizMode"
+        private const val K_VIZ_COLOR = "vizColor"
+        private const val K_HIDDEN = "hiddenCategories"
 
         private const val K_LYRICS = "showLyrics"
         private const val K_SORT = "listenSort"

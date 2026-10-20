@@ -43,6 +43,15 @@ object StreamResolver {
     /** Cuántas lecturas "de primer plano" (el video que estás viendo) hay en curso. */
     private val foreground = AtomicInteger(0)
 
+    /** Espera (máximo 8 s) a que no haya un video o canción abriéndose. Lo usan las descargas. */
+    suspend fun awaitForegroundIdle() {
+        var waited = 0
+        while (foreground.get() > 0 && waited < 8_000) {
+            delay(150)
+            waited += 150
+        }
+    }
+
     /** Máximo dos lecturas por adelantado a la vez. */
     private val backgroundGate = Semaphore(2)
 
