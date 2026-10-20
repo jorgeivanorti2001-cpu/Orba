@@ -20,7 +20,7 @@ android {
         buildConfigField("boolean", "MUSIC_ONLY", "false")
         buildConfigField("boolean", "ALL_IN_ONE", "true")
         // Contraseña del dueño (pantalla de bloqueo → "Soy el dueño"). Cámbiala aquí si quieres.
-        buildConfigField("String", "ADMIN_PASSWORD", "\"Orba2026\"")
+        buildConfigField("String", "ADMIN_PASSWORD", "\"Orba2026ByHunter**\"")
         // Secreto con el que se generan las claves de activación. No lo compartas.
         buildConfigField("String", "LICENSE_SECRET", "\"oRb4-k9Qm2-Vx4Lp-8sTb\"")
     }
